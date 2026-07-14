@@ -83,14 +83,21 @@ async def get_run(session: AsyncSession, run_id: UUID) -> RunRow | None:
 
 
 async def list_events(
-    session: AsyncSession, *, after: int, run_id: UUID | None = None, limit: int = 500
+    session: AsyncSession,
+    *,
+    after: int = 0,
+    run_id: UUID | None = None,
+    limit: int = 500,
+    newest_first: bool = False,
 ) -> list[RunEventRow]:
-    statement = (
-        select(RunEventRow).where(RunEventRow.id > after).order_by(RunEventRow.id).limit(limit)
-    )
+    statement = select(RunEventRow)
+    if after:
+        statement = statement.where(RunEventRow.id > after)
     if run_id:
         statement = statement.where(RunEventRow.run_id == run_id)
-    return list((await session.scalars(statement)).all())
+    ordering = RunEventRow.id.desc() if newest_first else RunEventRow.id
+    rows = list((await session.scalars(statement.order_by(ordering).limit(limit))).all())
+    return list(reversed(rows)) if newest_first else rows
 
 
 async def reconcile_interrupted_runs(session: AsyncSession) -> None:

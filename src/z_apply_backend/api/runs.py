@@ -85,10 +85,19 @@ async def close_browser(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> R
 
 @router.get("/{run_id}/events")
 async def run_events(
-    request: Request, run_id: UUID, after: int = 0
+    request: Request,
+    run_id: UUID,
+    after: int | None = None,
+    limit: int = Query(default=120, ge=1, le=500),
 ) -> list[dict[str, object]]:
     async with request.app.state.sessions() as session:
-        rows = await list_events(session, after=after, run_id=run_id)
+        rows = await list_events(
+            session,
+            after=after or 0,
+            run_id=run_id,
+            limit=limit,
+            newest_first=after is None,
+        )
     return [
         {
             "database_id": row.id,
