@@ -1,0 +1,36 @@
+[project]
+name = "z-apply-backend"
+version = "0.1.0"
+description = "Local HTTP, persistence, and SSE transport for Z-Apply Core."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14",
+  "asyncpg>=0.30",
+  "fastapi>=0.128",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.7",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.34",
+  "z-apply-core",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+z-apply-core = { path = "../z-apply-core", editable = true }
+
+[dependency-groups]
+dev = ["httpx>=0.28", "pytest>=8.3", "pytest-asyncio>=0.25", "ruff>=0.9"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# FastAPI's dependency signature is intentional, and Ruff's formatter is the
+# source of truth for line wrapping rather than E501.
+ignore = ["B008", "E501"]
