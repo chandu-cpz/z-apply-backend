@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from z_apply_core.integrations import CoreEvent, CoreEventSink, ZApplyCore
+from z_apply_core.integrations import CoreEvent, ZApplyCore
 
 from z_apply_backend.persistence.repositories import persist_event
 from z_apply_backend.services.event_hub import EventHub, StoredEvent
 
 
-class EventStore(CoreEventSink):
+class EventStore:
     """Durably write Core events before making them observable over SSE."""
 
     def __init__(

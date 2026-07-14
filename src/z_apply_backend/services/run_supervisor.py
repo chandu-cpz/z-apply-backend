@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from z_apply_core.integrations import (
     BrowserControlMode,
     BrowserTabState,
+    CoreRunHandle,
     CoreRunView,
     RunPhase,
     RunStatus,
@@ -33,7 +34,7 @@ class RunSupervisor:
         await self._core.start_run(request, run_id=run_id)
         return UUID(run_id)
 
-    def get_handle(self, run_id: UUID):
+    def get_handle(self, run_id: UUID) -> CoreRunHandle | None:
         return self._core.get_run(str(run_id))
 
     async def close(self) -> None:

@@ -30,7 +30,14 @@ def _run_values(view: CoreRunView) -> dict[str, object]:
 
 
 async def insert_run(session: AsyncSession, view: CoreRunView) -> None:
-    session.add(RunRow(id=UUID(view.run_id), created_at=view.created_at, **_run_values(view)))
+    session.add(
+        RunRow(
+            id=UUID(view.run_id),
+            created_at=view.created_at,
+            updated_at=view.created_at,
+            **_run_values(view),
+        )
+    )
 
 
 async def persist_event(session: AsyncSession, event: CoreEvent, view: CoreRunView) -> RunEventRow:

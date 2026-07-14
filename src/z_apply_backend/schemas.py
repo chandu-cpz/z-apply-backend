@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from z_apply_core.integrations import CoreRunView
 
 
 class StartRunBody(BaseModel):
@@ -29,6 +30,27 @@ class RunResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+    @classmethod
+    def from_core_view(cls, view: CoreRunView) -> RunResponse:
+        return cls(
+            id=view.run_id,
+            job_url=view.job_url,
+            task=view.task or "",
+            company=view.company,
+            role=view.role,
+            status=view.status.value,
+            phase=view.phase.value,
+            outcome=view.outcome.value if view.outcome else None,
+            summary=view.summary,
+            current_agent=view.current_agent,
+            current_model=view.current_model,
+            browser_tab_state=view.browser_tab_state.value,
+            latest_run_sequence=view.latest_event_sequence,
+            created_at=view.created_at,
+            started_at=view.started_at,
+            finished_at=view.finished_at,
+        )
 
 
 class AnswerBody(BaseModel):

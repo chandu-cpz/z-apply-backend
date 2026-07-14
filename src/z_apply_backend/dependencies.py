@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import Request
 from z_apply_core.integrations import ZApplyCore
 
@@ -8,12 +10,12 @@ from z_apply_backend.services.run_supervisor import RunSupervisor
 
 
 def core(request: Request) -> ZApplyCore:
-    return request.app.state.core
+    return cast(ZApplyCore, request.app.state.core)
 
 
 def supervisor(request: Request) -> RunSupervisor:
-    return request.app.state.supervisor
+    return cast(RunSupervisor, request.app.state.supervisor)
 
 
 def event_hub(request: Request) -> EventHub:
-    return request.app.state.event_hub
+    return cast(EventHub, request.app.state.event_hub)

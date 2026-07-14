@@ -23,7 +23,14 @@ build-backend = "uv_build"
 z-apply-core = { path = "../z-apply-core", editable = true }
 
 [dependency-groups]
-dev = ["httpx>=0.28", "pytest>=8.3", "pytest-asyncio>=0.25", "ruff>=0.9"]
+dev = [
+  "httpx>=0.28",
+  "mypy>=1.14",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "ruff>=0.9",
+  "ty>=0.0.56",
+]
 
 [tool.ruff]
 line-length = 100
@@ -34,3 +41,15 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # FastAPI's dependency signature is intentional, and Ruff's formatter is the
 # source of truth for line wrapping rather than E501.
 ignore = ["B008", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["z_apply_core", "z_apply_core.*"]
+ignore_missing_imports = true
+
+[tool.ty.src]
+include = ["src"]

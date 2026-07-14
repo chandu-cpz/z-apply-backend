@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator, Mapping
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -18,7 +19,7 @@ async def stream_events(request: Request, after: int | None = None) -> Streaming
     cursor = after if after is not None else int(last_event_id or 0)
     hub: EventHub = request.app.state.event_hub
 
-    async def stream():
+    async def stream() -> AsyncIterator[str]:
         nonlocal cursor
         async with request.app.state.sessions() as session:
             replay = await list_events(session, after=cursor)
@@ -58,5 +59,5 @@ async def stream_events(request: Request, after: int | None = None) -> Streaming
     )
 
 
-def _sse(event_id: int, event_type: str, data: dict[str, object]) -> str:
+def _sse(event_id: int, event_type: str, data: Mapping[str, object]) -> str:
     return f"id: {event_id}\nevent: {event_type}\ndata: {json.dumps(data, default=str, separators=(',', ':'))}\n\n"
