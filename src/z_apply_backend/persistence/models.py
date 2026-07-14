@@ -73,6 +73,10 @@ class HumanRequestRow(Base):
     context: Mapped[str] = mapped_column(Text)
     options: Mapped[list[str]] = mapped_column(JSONB)
     risk: Mapped[str] = mapped_column(String(32))
+    allow_free_text: Mapped[bool] = mapped_column(Boolean, default=True)
+    image_artifact_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("artifacts.id")
+    )
     status: Mapped[str] = mapped_column(String(32))
     answer: Mapped[str | None] = mapped_column(Text)
     approved: Mapped[bool | None] = mapped_column(Boolean)

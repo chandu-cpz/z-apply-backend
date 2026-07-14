@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from z_apply_core.integrations import InvalidRunTransition, StartRunRequest, ZApplyCore
 
+from z_apply_backend.api.errors import integration_error
 from z_apply_backend.dependencies import core, supervisor
 from z_apply_backend.persistence.repositories import get_run, list_events, list_runs
-from z_apply_backend.schemas import RunResponse, StartRunBody
+from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody
 from z_apply_backend.services.run_supervisor import RunSupervisor
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -18,7 +20,10 @@ router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 async def start_run(
     body: StartRunBody, service: RunSupervisor = Depends(supervisor)
 ) -> RunResponse:
-    run_id = await service.create(StartRunRequest(job_url=str(body.job_url), task=body.task))
+    try:
+        run_id = await service.create(StartRunRequest(job_url=str(body.job_url), task=body.task))
+    except Exception as exc:
+        raise integration_error(exc) from None
     # The supervisor persisted the initial view, but a direct Core view is the freshest source.
     handle = service.get_handle(run_id)
     assert handle is not None
@@ -69,7 +74,20 @@ async def focus_run(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> RunRe
     try:
         return RunResponse.from_core_view(await handle.focus_browser())
     except Exception as exc:
-        raise _integration_error(exc) from None
+        raise integration_error(exc) from None
+
+
+@router.post("/{run_id}/context")
+async def send_context(
+    run_id: UUID, body: ContextBody, app_core: ZApplyCore = Depends(core)
+) -> dict[str, object]:
+    handle = app_core.get_run(str(run_id))
+    if handle is None:
+        raise HTTPException(404, detail={"code": "run_not_found"})
+    try:
+        return asdict(await handle.send_context(body.content, source="web"))
+    except Exception as exc:
+        raise integration_error(exc) from None
 
 
 @router.delete("/{run_id}/browser", response_model=RunResponse)
@@ -80,7 +98,7 @@ async def close_browser(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> R
     try:
         return RunResponse.from_core_view(await handle.close_browser())
     except Exception as exc:
-        raise _integration_error(exc) from None
+        raise integration_error(exc) from None
 
 
 @router.get("/{run_id}/events")
@@ -111,13 +129,3 @@ async def run_events(
         }
         for row in rows
     ]
-
-
-def _integration_error(exc: Exception) -> HTTPException:
-    from z_apply_core.integrations import BrowserUnavailable, InvalidRunTransition
-
-    if isinstance(exc, BrowserUnavailable):
-        return HTTPException(409, detail={"code": "browser_unavailable"})
-    if isinstance(exc, InvalidRunTransition):
-        return HTTPException(409, detail={"code": "invalid_run_transition"})
-    return HTTPException(409, detail={"code": "browser_control_conflict"})

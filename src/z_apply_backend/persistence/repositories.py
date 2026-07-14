@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from z_apply_core.integrations import CoreEvent, CoreRunView
+from z_apply_core.integrations import CoreArtifact, CoreEvent, CoreHumanRequest, CoreRunView
 
-from z_apply_backend.persistence.models import RunEventRow, RunRow
+from z_apply_backend.persistence.models import ArtifactRow, HumanRequestRow, RunEventRow, RunRow
 
 
 def _run_values(view: CoreRunView) -> dict[str, object]:
@@ -100,29 +101,147 @@ async def list_events(
     return list(reversed(rows)) if newest_first else rows
 
 
-async def list_interrupted_runs(session: AsyncSession) -> list[RunRow]:
-    statement = select(RunRow).where(
-        RunRow.status.in_(
-            ("queued", "starting", "running", "waiting_human", "human_control")
+async def interrupt_active_runs(session: AsyncSession) -> list[RunEventRow]:
+    """Truthfully terminate runs whose live Core process disappeared.
+
+    Restarting a job application is unsafe: the previous process may have
+    completed an irreversible browser action immediately before it died.
+    """
+
+    active_statuses = ("queued", "starting", "running", "waiting_human", "human_control")
+    rows = list(
+        (
+            await session.scalars(
+                select(RunRow).where(RunRow.status.in_(active_statuses)).with_for_update()
+            )
+        ).all()
+    )
+    occurred_at = datetime.now(UTC)
+    events: list[RunEventRow] = []
+    for row in rows:
+        sequence = await _next_run_sequence(session, row.id, row.latest_run_sequence)
+        event = RunEventRow(
+            run_id=row.id,
+            run_sequence=sequence,
+            occurred_at=occurred_at,
+            type="run.interrupted",
+            source={"component": "backend", "reason": "process_restart"},
+            level="warning",
+            payload={
+                "outcome": "interrupted",
+                "summary": "Backend restarted while this application was active; it was not retried.",
+            },
         )
+        session.add(event)
+        events.append(event)
+        row.status = "terminal"
+        row.phase = "terminal"
+        row.outcome = "interrupted"
+        row.summary = "Backend restarted while this application was active; it was not retried."
+        row.latest_run_sequence = sequence
+        row.finished_at = occurred_at
+    await session.flush()
+    return events
+
+
+async def mark_run_start_failed(session: AsyncSession, run_id: UUID, error_code: str) -> None:
+    row = await session.get(RunRow, run_id, with_for_update=True)
+    if row is None:
+        return
+    occurred_at = datetime.now(UTC)
+    sequence = await _next_run_sequence(session, run_id, row.latest_run_sequence)
+    session.add(
+        RunEventRow(
+            run_id=run_id,
+            run_sequence=sequence,
+            occurred_at=occurred_at,
+            type="run.start_failed",
+            source={"component": "backend"},
+            level="error",
+            payload={"error_code": error_code},
+        )
+    )
+    row.status = "terminal"
+    row.phase = "terminal"
+    row.outcome = "failed"
+    row.summary = "Core rejected or failed to start this run."
+    row.latest_run_sequence = sequence
+    row.finished_at = occurred_at
+
+
+async def _next_run_sequence(session: AsyncSession, run_id: UUID, cached: int) -> int:
+    """Allocate after durable event truth; run metadata is only a read cache."""
+    durable = await session.scalar(
+        select(func.max(RunEventRow.run_sequence)).where(RunEventRow.run_id == run_id)
+    )
+    return max(cached, durable or 0) + 1
+
+
+async def upsert_human_request(session: AsyncSession, request: CoreHumanRequest) -> None:
+    values = {
+        "id": UUID(request.request_id),
+        "run_id": UUID(request.run_id),
+        "kind": request.kind,
+        "question": request.question,
+        "context": request.context,
+        "options": list(request.options),
+        "risk": request.risk,
+        "allow_free_text": request.allow_free_text,
+        "image_artifact_id": (
+            UUID(request.image_artifact_id) if request.image_artifact_id is not None else None
+        ),
+        "status": request.status,
+        "answer": request.answer,
+        "approved": request.approved,
+        "responder": request.responder,
+        "created_at": request.created_at,
+        "resolved_at": request.resolved_at,
+    }
+    statement = pg_insert(HumanRequestRow).values(**values)
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[HumanRequestRow.id],
+            set_={key: value for key, value in values.items() if key not in {"id", "run_id"}},
+        )
+    )
+
+
+async def list_human_requests(session: AsyncSession, run_id: UUID) -> list[HumanRequestRow]:
+    statement = (
+        select(HumanRequestRow)
+        .where(HumanRequestRow.run_id == run_id)
+        .order_by(HumanRequestRow.created_at)
     )
     return list((await session.scalars(statement)).all())
 
 
-async def mark_run_restarted(
-    session: AsyncSession, run_id: UUID, replacement_run_id: UUID
-) -> None:
+async def upsert_artifact(session: AsyncSession, artifact: CoreArtifact) -> None:
+    values = {
+        "id": UUID(artifact.artifact_id),
+        "run_id": UUID(artifact.run_id),
+        "kind": artifact.kind,
+        "filename": artifact.filename,
+        "relative_path": artifact.relative_path,
+        "mime_type": artifact.mime_type,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "created_at": artifact.created_at,
+    }
+    statement = pg_insert(ArtifactRow).values(**values)
     await session.execute(
-        update(RunRow)
-        .where(RunRow.id == run_id)
-        .values(
-            status="terminal",
-            phase="terminal",
-            outcome="interrupted",
-            summary=(
-                "Backend restarted while this run was active. "
-                f"Execution was retried as run {replacement_run_id}."
-            ),
-            finished_at=datetime.now(UTC),
+        statement.on_conflict_do_update(
+            index_elements=[ArtifactRow.id],
+            set_={key: value for key, value in values.items() if key not in {"id", "run_id"}},
         )
     )
+
+
+async def list_artifacts(session: AsyncSession, run_id: UUID) -> list[ArtifactRow]:
+    statement = (
+        select(ArtifactRow).where(ArtifactRow.run_id == run_id).order_by(ArtifactRow.created_at)
+    )
+    return list((await session.scalars(statement)).all())
+
+
+async def get_artifact(session: AsyncSession, artifact_id: UUID) -> ArtifactRow | None:
+    return await session.get(ArtifactRow, artifact_id)

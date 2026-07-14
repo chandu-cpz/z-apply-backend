@@ -63,3 +63,7 @@ class SubmissionDecisionBody(BaseModel):
 
 class BrowserControlBody(BaseModel):
     run_id: UUID
+
+
+class ContextBody(BaseModel):
+    content: str = Field(min_length=1, max_length=8_000)
