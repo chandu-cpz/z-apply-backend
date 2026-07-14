@@ -6,12 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from z_apply_core.integrations import CoreIntegrationConfig, ZApplyCore
+from z_apply_core.integrations import CoreIntegrationConfig, StartRunRequest, ZApplyCore
 
 from z_apply_backend.api import artifacts, browser, diagnostics, events, human, runs
 from z_apply_backend.config import Settings
 from z_apply_backend.persistence.database import make_engine, make_session_factory
-from z_apply_backend.persistence.repositories import reconcile_interrupted_runs
+from z_apply_backend.persistence.repositories import list_interrupted_runs, mark_run_restarted
 from z_apply_backend.services.event_hub import EventHub
 from z_apply_backend.services.event_store import EventStore
 from z_apply_backend.services.run_supervisor import RunSupervisor
@@ -24,8 +24,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sessions = make_session_factory(engine)
     async with engine.connect() as connection:
         await connection.execute(text("SELECT 1"))
-    async with sessions.begin() as session:
-        await reconcile_interrupted_runs(session)
+    async with sessions() as session:
+        interrupted_runs = await list_interrupted_runs(session)
     core = ZApplyCore(CoreIntegrationConfig(max_active_runs=settings.max_active_runs))
     hub = EventHub()
     event_store = EventStore(sessions, core, hub)
@@ -35,7 +35,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sessions = sessions
     app.state.core = core
     app.state.event_hub = hub
-    app.state.supervisor = RunSupervisor(core, sessions)
+    supervisor = RunSupervisor(core, sessions)
+    app.state.supervisor = supervisor
+    for interrupted_run in interrupted_runs:
+        replacement_run_id = await supervisor.create(
+            StartRunRequest(job_url=interrupted_run.job_url, task=interrupted_run.task or None)
+        )
+        async with sessions.begin() as session:
+            await mark_run_restarted(session, interrupted_run.id, replacement_run_id)
     try:
         yield
     finally:

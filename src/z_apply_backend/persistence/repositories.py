@@ -100,17 +100,29 @@ async def list_events(
     return list(reversed(rows)) if newest_first else rows
 
 
-async def reconcile_interrupted_runs(session: AsyncSession) -> None:
+async def list_interrupted_runs(session: AsyncSession) -> list[RunRow]:
+    statement = select(RunRow).where(
+        RunRow.status.in_(
+            ("queued", "starting", "running", "waiting_human", "human_control")
+        )
+    )
+    return list((await session.scalars(statement)).all())
+
+
+async def mark_run_restarted(
+    session: AsyncSession, run_id: UUID, replacement_run_id: UUID
+) -> None:
     await session.execute(
         update(RunRow)
-        .where(
-            RunRow.status.in_(("queued", "starting", "running", "waiting_human", "human_control"))
-        )
+        .where(RunRow.id == run_id)
         .values(
             status="terminal",
             phase="terminal",
-            outcome="failed",
-            summary="Backend restarted while this run was active; execution was not resumed.",
+            outcome="interrupted",
+            summary=(
+                "Backend restarted while this run was active. "
+                f"Execution was retried as run {replacement_run_id}."
+            ),
             finished_at=datetime.now(UTC),
         )
     )
