@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from z_apply_backend.config import Settings
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import ArtifactRow
 from z_apply_backend.persistence.repositories import get_artifact, get_run, list_artifacts
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 
 @router.get("/runs/{run_id}/artifacts")
 async def artifacts(request: Request, run_id: UUID) -> list[dict[str, object]]:
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         run = await get_run(session, run_id)
         rows = await list_artifacts(session, run_id) if run is not None else []
     if run is None:
@@ -24,7 +25,7 @@ async def artifacts(request: Request, run_id: UUID) -> list[dict[str, object]]:
 
 @router.get("/artifacts/{artifact_id}")
 async def artifact(request: Request, artifact_id: UUID) -> FileResponse:
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         item = await get_artifact(session, artifact_id)
     if item is None:
         raise HTTPException(404, detail={"code": "artifact_not_found"})

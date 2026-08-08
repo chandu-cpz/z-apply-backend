@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Mapping
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import RunEventRow
 from z_apply_backend.persistence.repositories import list_events
 from z_apply_backend.services.event_hub import EventHub
@@ -35,7 +36,7 @@ async def stream_events(
         try:
             page_size = 500
             while not await request.is_disconnected():
-                async with request.app.state.sessions() as session:
+                async with session_scope(request.app.state.sessions) as session:
                     replay = await list_events(session, after=cursor, limit=page_size)
                 for row in replay:
                     cursor = row.id
@@ -55,6 +56,31 @@ async def stream_events(
                     yield _sse(event.id, event.event_type, event.data)
         finally:
             await hub.unregister(queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/live")
+async def stream_live_events(
+    request: Request, run_id: str | None = Query(default=None)
+) -> StreamingResponse:
+    """Stream high-frequency, non-persisted events (reasoning/text/tool-call
+    deltas) straight from the running core run. No DB replay: only events the
+    core publishes live to its live broadcaster.
+    """
+    core = request.app.state.core
+
+    async def stream() -> AsyncIterator[str]:
+        async for event in core.subscribe_live():
+            if await request.is_disconnected():
+                break
+            if run_id is not None and event.run_id != run_id:
+                continue
+            yield _sse(event.sequence, event.type, event.to_dict())
 
     return StreamingResponse(
         stream(),

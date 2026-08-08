@@ -8,6 +8,7 @@ from z_apply_core.integrations import CoreRunHandle, ZApplyCore
 
 from z_apply_backend.api.errors import integration_error
 from z_apply_backend.dependencies import core
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import HumanRequestRow, RunRow
 from z_apply_backend.persistence.repositories import list_human_requests, upsert_human_request
 from z_apply_backend.schemas import AnswerBody, SubmissionDecisionBody
@@ -23,13 +24,13 @@ async def human_requests(
     if handle is not None:
         current = await handle.human_requests()
         if current:
-            async with request.app.state.sessions.begin() as session:
+            async with session_scope(request.app.state.sessions, begin=True) as session:
                 for item in current:
                     await upsert_human_request(session, item)
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         rows = await list_human_requests(session, run_id)
     if handle is None and not rows:
-        async with request.app.state.sessions() as session:
+        async with session_scope(request.app.state.sessions) as session:
             if await session.get(RunRow, run_id) is None:
                 raise HTTPException(404, detail={"code": "run_not_found"})
     return [_human_dict(row) for row in rows]
@@ -53,7 +54,7 @@ async def answer(
         result = await handle.answer_human_request(live_request_id, body.answer, responder="web")
     except Exception as exc:
         raise integration_error(exc) from None
-    async with request.app.state.sessions.begin() as session:
+    async with session_scope(request.app.state.sessions, begin=True) as session:
         await upsert_human_request(session, result)
     return asdict(result)
 
@@ -80,7 +81,7 @@ async def submission_decision(
         )
     except Exception as exc:
         raise integration_error(exc) from None
-    async with request.app.state.sessions.begin() as session:
+    async with session_scope(request.app.state.sessions, begin=True) as session:
         await upsert_human_request(session, result)
     return asdict(result)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from z_apply_core.integrations import CoreEvent, ZApplyCore
 
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.repositories import (
     persist_event,
     upsert_artifact,
@@ -28,7 +29,7 @@ class EventStore:
         view = await handle.view()
         human_requests = await handle.human_requests()
         artifacts = await handle.artifacts()
-        async with self._sessions.begin() as session:
+        async with session_scope(self._sessions, begin=True) as session:
             row = await persist_event(session, event, view)
             for human_request in human_requests:
                 await upsert_human_request(session, human_request)

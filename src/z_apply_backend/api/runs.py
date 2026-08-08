@@ -9,6 +9,7 @@ from z_apply_core.integrations import InvalidRunTransition, StartRunRequest, ZAp
 
 from z_apply_backend.api.errors import integration_error
 from z_apply_backend.dependencies import core, supervisor
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.repositories import get_run, list_events, list_runs
 from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody
 from z_apply_backend.services.run_supervisor import RunSupervisor
@@ -38,7 +39,7 @@ async def get_runs(
     status_filter: str | None = Query(default=None, alias="status"),
     outcome: str | None = None,
 ) -> list[RunResponse]:
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         rows = await list_runs(
             session, limit=limit, cursor=cursor, status=status_filter, outcome=outcome
         )
@@ -47,7 +48,7 @@ async def get_runs(
 
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run_detail(request: Request, run_id: UUID) -> RunResponse:
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         row = await get_run(session, run_id)
     if row is None:
         raise HTTPException(404, detail={"code": "run_not_found"})
@@ -108,7 +109,7 @@ async def run_events(
     after: int | None = None,
     limit: int = Query(default=120, ge=1, le=500),
 ) -> list[dict[str, object]]:
-    async with request.app.state.sessions() as session:
+    async with session_scope(request.app.state.sessions) as session:
         rows = await list_events(
             session,
             after=after or 0,

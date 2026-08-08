@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,6 +18,8 @@ from z_apply_backend.services.event_hub import EventHub
 from z_apply_backend.services.event_store import EventStore
 from z_apply_backend.services.run_supervisor import RunSupervisor
 from z_apply_backend.services.vnc_bridge import VncBridge
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -45,7 +49,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.supervisor.close()
         await app.state.vnc_bridge.close()
         await core.close()
-        await engine.dispose()
+        # Bound the pool teardown: a connection stranded by a cancelled
+        # transaction must never hang uvicorn shutdown indefinitely.
+        try:
+            await asyncio.wait_for(engine.dispose(), timeout=10)
+        except TimeoutError:
+            logger.warning("engine.dispose() exceeded 10s; connections force-closed")
+            await asyncio.shield(engine.dispose())
 
 
 def create_app() -> FastAPI:

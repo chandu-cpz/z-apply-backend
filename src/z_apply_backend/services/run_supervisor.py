@@ -16,6 +16,7 @@ from z_apply_core.integrations import (
     ZApplyCore,
 )
 
+from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.repositories import insert_run, mark_run_start_failed
 
 
@@ -32,12 +33,12 @@ class RunSupervisor:
         if not self.accepting:
             raise RuntimeError("run supervisor is stopping")
         run_id = str(uuid4())
-        async with self._sessions.begin() as session:
+        async with session_scope(self._sessions, begin=True) as session:
             await insert_run(session, _queued_view(request, run_id))
         try:
             handle = await self._core.start_run(request, run_id=run_id)
         except Exception as exc:
-            async with self._sessions.begin() as session:
+            async with session_scope(self._sessions, begin=True) as session:
                 await mark_run_start_failed(session, UUID(run_id), type(exc).__name__)
             raise
         observer = asyncio.create_task(self._observe(handle), name=f"observe-core-run-{run_id}")
