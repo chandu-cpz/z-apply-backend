@@ -11,4 +11,4 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://zapply:zapply@127.0.0.1:5433/zapply"
     artifact_root: Path = Path("../z-apply-core/.z-apply/runs")
     max_active_runs: int = 3
-    cors_origin: str = "http://127.0.0.1:5173"
+    cors_origin: str = "*"

@@ -53,3 +53,28 @@ async def settings() -> dict[str, object]:
         "gmail_enabled": False,
         "simplify_enabled": True,
     }
+
+
+@router.get("/tasks")
+async def asyncio_tasks() -> dict[str, object]:
+    """Dump live asyncio task stacks for stall diagnosis (no internals leak)."""
+    import asyncio
+
+    tasks = asyncio.all_tasks()
+    frames: list[dict[str, object]] = []
+    for task in tasks:
+        stack = []
+        for frame in task.get_stack():
+            stack.append(
+                f"{frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}"
+            )
+        frames.append(
+            {
+                "name": task.get_name(),
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+                "stack": stack[-14:],
+            }
+        )
+    frames.sort(key=lambda item: str(item["name"]))
+    return {"task_count": len(tasks), "tasks": frames}
