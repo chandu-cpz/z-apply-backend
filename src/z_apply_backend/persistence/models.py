@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -97,3 +98,30 @@ class ArtifactRow(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ModelCallRow(Base):
+    """One successful LLM call per run: the auditable call ledger.
+
+    Fed from durable ``model.call.metrics`` events (one per successful call,
+    carrying the resolved cost — gateway-reported or rate-card estimate). Rows
+    are immutable; totals are derived with SQL aggregates so the API never
+    drifts from the source of truth.
+    """
+
+    __tablename__ = "model_calls"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer, default=0)
+    agent: Mapped[str] = mapped_column(String(120), default="")
+    model: Mapped[str] = mapped_column(String(255), default="")
+    provider: Mapped[str] = mapped_column(String(80), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    ttft_ms: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    tok_per_second: Mapped[float | None] = mapped_column(Float)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

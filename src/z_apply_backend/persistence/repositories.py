@@ -8,7 +8,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from z_apply_core.integrations import CoreArtifact, CoreEvent, CoreHumanRequest, CoreRunView
 
-from z_apply_backend.persistence.models import ArtifactRow, HumanRequestRow, RunEventRow, RunRow
+from z_apply_backend.persistence.models import (
+    ArtifactRow,
+    HumanRequestRow,
+    ModelCallRow,
+    RunEventRow,
+    RunRow,
+)
 
 
 def _run_values(view: CoreRunView) -> dict[str, object]:
@@ -245,3 +251,65 @@ async def list_artifacts(session: AsyncSession, run_id: UUID) -> list[ArtifactRo
 
 async def get_artifact(session: AsyncSession, artifact_id: UUID) -> ArtifactRow | None:
     return await session.get(ArtifactRow, artifact_id)
+
+
+def _model_call_values(event: CoreEvent) -> dict[str, object]:
+    """Map a durable ``model.call.metrics`` event to a ledger row.
+
+    The event payload carries the resolved cost (gateway-reported or rate-card
+    estimate) from the core's call ledger, so the DB row is auditable without
+    re-deriving provider rates.
+    """
+    payload = event.payload
+    return {
+        "run_id": UUID(event.run_id),
+        "sequence": event.sequence,
+        "agent": str(payload.get("role") or ""),
+        "model": str(payload.get("model_id") or ""),
+        "provider": str(payload.get("provider") or ""),
+        "input_tokens": int(payload.get("input_tokens") or 0),
+        "output_tokens": int(payload.get("output_tokens") or 0),
+        "cache_read_tokens": int(payload.get("cache_read_tokens") or 0),
+        "ttft_ms": payload.get("ttft_ms"),
+        "duration_ms": payload.get("duration_ms"),
+        "tok_per_second": payload.get("tok_per_second"),
+        "cost_usd": payload.get("cost_usd"),
+        "occurred_at": event.occurred_at,
+    }
+
+
+async def insert_model_call(session: AsyncSession, event: CoreEvent) -> None:
+    """Persist one successful call as a ledger row (per-call events are unique)."""
+    session.add(ModelCallRow(**_model_call_values(event)))
+
+
+async def list_model_calls(session: AsyncSession, run_id: UUID) -> list[ModelCallRow]:
+    statement = (
+        select(ModelCallRow)
+        .where(ModelCallRow.run_id == run_id)
+        .order_by(ModelCallRow.sequence, ModelCallRow.id)
+    )
+    return list((await session.scalars(statement)).all())
+
+
+async def model_call_totals(session: AsyncSession, run_id: UUID) -> dict[str, float | int]:
+    """SQL-derived ledger totals; never drift from the row source of truth."""
+    row = (
+        await session.execute(
+            select(
+                func.count(ModelCallRow.id),
+                func.coalesce(func.sum(ModelCallRow.input_tokens), 0),
+                func.coalesce(func.sum(ModelCallRow.output_tokens), 0),
+                func.coalesce(func.sum(ModelCallRow.cache_read_tokens), 0),
+                func.coalesce(func.sum(ModelCallRow.cost_usd), 0.0),
+            ).where(ModelCallRow.run_id == run_id)
+        )
+    ).one()
+    calls, input_tokens, output_tokens, cache_read_tokens, cost_usd = row
+    return {
+        "calls": int(calls or 0),
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "cache_read_tokens": int(cache_read_tokens or 0),
+        "cost_usd": round(float(cost_usd or 0.0), 6),
+    }

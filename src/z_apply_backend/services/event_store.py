@@ -5,6 +5,7 @@ from z_apply_core.integrations import CoreEvent, ZApplyCore
 
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.repositories import (
+    insert_model_call,
     persist_event,
     upsert_artifact,
     upsert_human_request,
@@ -31,6 +32,10 @@ class EventStore:
         artifacts = await handle.artifacts()
         async with session_scope(self._sessions, begin=True) as session:
             row = await persist_event(session, event, view)
+            if event.type == "model.call.metrics":
+                # One ledger row per successful LLM call (auditable token/cost
+                # history); totals are SQL-derived at read time.
+                await insert_model_call(session, event)
             for human_request in human_requests:
                 await upsert_human_request(session, human_request)
             for artifact in artifacts:

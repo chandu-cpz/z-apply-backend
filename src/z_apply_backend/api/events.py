@@ -66,18 +66,43 @@ async def stream_events(
 
 @router.get("/live")
 async def stream_live_events(
-    request: Request, run_id: str | None = Query(default=None)
+    request: Request,
+    run_id: str | None = Query(default=None),
+    after: int | None = Query(default=None, ge=0),
 ) -> StreamingResponse:
     """Stream high-frequency, non-persisted events (reasoning/text/tool-call
     deltas) straight from the running core run. No DB replay: only events the
-    core publishes live to its live broadcaster.
+    core publishes live to its live broadcaster. The core broadcaster's bounded
+    replay tail (500 events) is delivered on subscribe, so a reconnecting
+    EventSource resumes from its ``Last-Event-ID`` without losing the in-flight
+    token stream: events at or below the client's cursor are skipped, making
+    the wire monotonic and duplicate-free.
+
+    Silent stretches (long tool executions) emit an SSE comment every 15s so
+    proxies and load balancers with idle timeouts never kill the connection.
     """
     core = request.app.state.core
+    last_event_id = request.headers.get("last-event-id")
+    try:
+        # Resume from whichever cursor is furthest: an explicit ?after= query or
+        # the browser's Last-Event-ID (sent automatically by EventSource on
+        # reconnect from the ``id:`` fields in our frames).
+        after_cursor = after if after is not None else 0
+        cursor = max(after_cursor, int(last_event_id or 0))
+    except ValueError:
+        raise HTTPException(422, detail={"code": "invalid_event_cursor"}) from None
+    if cursor < 0:
+        raise HTTPException(422, detail={"code": "invalid_event_cursor"})
 
     async def stream() -> AsyncIterator[str]:
-        async for event in core.subscribe_live():
+        async for event in core.subscribe_live(keepalive=15.0):
             if await request.is_disconnected():
                 break
+            if event is None:
+                yield ": z-apply keepalive\n\n"
+                continue
+            if event.sequence <= cursor:
+                continue
             if run_id is not None and event.run_id != run_id:
                 continue
             yield _sse(event.sequence, event.type, event.to_dict())
@@ -85,7 +110,11 @@ async def stream_live_events(
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

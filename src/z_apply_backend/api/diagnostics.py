@@ -28,6 +28,7 @@ async def diagnostics(app_core: ZApplyCore = Depends(core)) -> dict[str, object]
         "max_active_runs": settings.max_active_runs,
         "active_runs": len(app_core.active_run_ids()),
         "live_view": (await app_core.live_view()).available,
+        "live_stream": await app_core.live_stream_snapshot(),
         "database": "connected",
     }
 

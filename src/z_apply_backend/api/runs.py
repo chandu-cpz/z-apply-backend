@@ -12,7 +12,13 @@ from z_apply_backend.api.errors import integration_error
 from z_apply_backend.dependencies import core, supervisor
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import RunEventRow, RunRow
-from z_apply_backend.persistence.repositories import get_run, list_events, list_runs
+from z_apply_backend.persistence.repositories import (
+    get_run,
+    list_events,
+    list_model_calls,
+    list_runs,
+    model_call_totals,
+)
 from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody
 from z_apply_backend.services.run_supervisor import RunSupervisor
 
@@ -166,6 +172,42 @@ async def close_browser(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> R
         return RunResponse.from_core_view(await handle.close_browser())
     except Exception as exc:
         raise integration_error(exc) from None
+
+
+@router.get("/{run_id}/calls")
+async def run_calls(request: Request, run_id: UUID) -> dict[str, object]:
+    """Per-run LLM call ledger: one row per successful model call plus
+    SQL-derived totals. Every call's tokens, cache hits, TTFT, throughput, and
+    resolved cost are auditable here regardless of how the run was started
+    (CLI or cockpit) — the backend path now persists the ledger the CLI used
+    to keep to itself.
+    """
+    async with session_scope(request.app.state.sessions) as session:
+        if await session.get(RunRow, run_id) is None:
+            raise HTTPException(404, detail={"code": "run_not_found"})
+        rows = await list_model_calls(session, run_id)
+        totals = await model_call_totals(session, run_id)
+    return {
+        "run_id": str(run_id),
+        "totals": totals,
+        "calls": [
+            {
+                "sequence": row.sequence,
+                "agent": row.agent,
+                "model": row.model,
+                "provider": row.provider,
+                "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens,
+                "cache_read_tokens": row.cache_read_tokens,
+                "ttft_ms": row.ttft_ms,
+                "duration_ms": row.duration_ms,
+                "tok_per_second": row.tok_per_second,
+                "cost_usd": row.cost_usd,
+                "occurred_at": row.occurred_at.isoformat(),
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.get("/{run_id}/events")
