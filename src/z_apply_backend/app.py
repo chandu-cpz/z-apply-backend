@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,9 +49,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await app.state.supervisor.close()
-        await app.state.vnc_bridge.close()
-        await core.close()
+        # Bound every teardown step: a stuck page or browser connection must
+        # never hang uvicorn's graceful shutdown forever (the reloader then
+        # cannot restart and the port stays wedged). Each step gets a hard
+        # budget, and if the core cannot close the supervised browser in time,
+        # the playwright/camoufox driver processes are force-killed so the
+        # server process can exit and the next one can bind.
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(app.state.supervisor.close(), timeout=10)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(app.state.vnc_bridge.close(), timeout=10)
+        try:
+            await asyncio.wait_for(core.close(), timeout=25)
+        except TimeoutError:
+            logger.warning("core.close() exceeded 25s; force-killing browser driver")
+            await asyncio.shield(_force_kill_browser_driver())
         # Bound the pool teardown: a connection stranded by a cancelled
         # transaction must never hang uvicorn shutdown indefinitely.
         try:
@@ -56,6 +71,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except TimeoutError:
             logger.warning("engine.dispose() exceeded 10s; connections force-closed")
             await asyncio.shield(engine.dispose())
+
+
+async def _force_kill_browser_driver() -> None:
+    """SIGKILL the supervised browser's driver processes (last-resort teardown).
+
+    Scans /proc for the playwright node driver and the camoufox browser started
+    for this backend and kills them so the uvicorn worker can exit. Only runs
+    when graceful shutdown already failed.
+    """
+    markers = ("playwright/driver/package/cli.js run-driver", "camoufox-bin")
+    killed: list[str] = []
+    try:
+        for entry in os.scandir("/proc"):
+            if not entry.name.isdigit():
+                continue
+            try:
+                cmdline = Path(entry.path, "cmdline").read_bytes().replace(b"\0", b" ").decode(
+                    errors="replace"
+                )
+            except OSError:
+                continue
+            if any(marker in cmdline for marker in markers):
+                try:
+                    os.kill(int(entry.name), 9)
+                    killed.append(f"{entry.name}:{cmdline[:60]}")
+                except ProcessLookupError:
+                    continue
+    except OSError:
+        pass
+    if killed:
+        logger.warning("force-killed lingering browser processes: %s", killed)
 
 
 def create_app() -> FastAPI:
