@@ -5,16 +5,82 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse
 from z_apply_core.integrations import InvalidRunTransition, StartRunRequest, ZApplyCore
 
 from z_apply_backend.api.errors import integration_error
 from z_apply_backend.dependencies import core, supervisor
 from z_apply_backend.persistence.database import session_scope
+from z_apply_backend.persistence.models import RunEventRow, RunRow
 from z_apply_backend.persistence.repositories import get_run, list_events, list_runs
 from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody
 from z_apply_backend.services.run_supervisor import RunSupervisor
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
+
+
+@router.get("/{run_id}/log", response_class=PlainTextResponse)
+async def run_log(request: Request, run_id: UUID, limit: int = Query(default=500, ge=1, le=5000)) -> PlainTextResponse:
+    """A human-readable, chronological plain-text log of one run.
+
+    No SQL needed to understand what happened: each line carries the wall-clock
+    time, the agent, the event kind, and a compact summary (turn text, tool
+    call + outcome, human handoffs, phase changes, recoveries).
+    """
+    async with session_scope(request.app.state.sessions) as session:
+        if await session.get(RunRow, run_id) is None:
+            raise HTTPException(404, detail={"code": "run_not_found"})
+        rows = await list_events(
+            session,
+            run_id=run_id,
+            limit=limit,
+        )
+    return PlainTextResponse("\n".join(_render_log_line(row) for row in rows))
+
+
+def _render_log_line(row: RunEventRow) -> str:
+    occurred = row.occurred_at.strftime("%H:%M:%S")
+    payload = row.payload or {}
+    kind = row.type
+    summary = _log_summary(kind, payload)
+    agent = payload.get("agent") or payload.get("agent_path") or payload.get("role") or "-"
+    return f"{occurred} [{kind:<28}] {str(agent)[:24]:<24} {summary}"
+
+
+def _log_summary(kind: str, payload: dict[str, object]) -> str:
+    text = payload.get("text")
+    if isinstance(text, str) and text.strip():
+        return _clip(text, 140)
+    if kind.startswith("tool."):
+        tool = payload.get("tool_name", "")
+        if kind == "tool.started":
+            return f"{tool} {_clip(str(payload.get("input") or ""), 90)}"
+        error = payload.get("error")
+        output = payload.get("output")
+        status = output.get("status") if isinstance(output, dict) else None
+        if error:
+            return f"{tool} -> ERROR: {_clip(str(error), 120)}"
+        return f"{tool} -> {status or 'ok'}"
+    if kind == "run.phase_changed":
+        return f"phase -> {payload.get('phase', '')}"
+    if kind == "human.requested":
+        return f"HUMAN ASKED ({payload.get('kind', 'question')}): {_clip(str(payload.get('question') or payload.get('context') or ''), 120)}"
+    if kind == "human.resolved":
+        return f"HUMAN ANSWERED: {_clip(str(payload.get('answer') or ''), 60)}"
+    if kind in ("recovery.started",):
+        return f"RECOVERY: {_clip(str(payload.get('error') or ''), 120)}"
+    if kind in ("authentication.evidence",):
+        return f"auth {payload.get('status', '')}: {_clip(str(payload.get('summary') or ''), 120)}"
+    if kind in ("run.queued", "run.started", "run.terminal", "run.phase_changed", "graph.event"):
+        return _clip(str(payload.get("summary") or payload.get("outcome") or ""), 120) or kind
+    if kind == "submission.approval_requested":
+        return f"APPROVAL REQUESTED: {_clip(str(payload.get('context') or ''), 120)}"
+    return _clip(str(payload)[:140], 140)
+
+
+def _clip(value: str, limit: int) -> str:
+    value = value.replace("\n", " ").strip()
+    return value if len(value) <= limit else f"{value[: limit - 1]}…"
 
 
 @router.post("", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
