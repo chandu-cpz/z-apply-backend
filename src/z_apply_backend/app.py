@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from z_apply_core.integrations import CoreIntegrationConfig, ZApplyCore
 
-from z_apply_backend.api import artifacts, browser, diagnostics, events, human, runs
+from z_apply_backend.api import artifacts, browser, diagnostics, events, human, prompts, runs
 from z_apply_backend.config import Settings
 from z_apply_backend.persistence.database import make_engine, make_session_factory
 from z_apply_backend.persistence.repositories import interrupt_active_runs
@@ -115,6 +115,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(runs.router)
+    app.include_router(prompts.router)
     app.include_router(events.router)
     app.include_router(human.router)
     app.include_router(browser.router)

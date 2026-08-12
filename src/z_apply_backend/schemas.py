@@ -10,6 +10,8 @@ from z_apply_core.integrations import CoreRunView
 class StartRunBody(BaseModel):
     job_url: HttpUrl
     task: str | None = Field(default=None, max_length=10_000)
+    prompt_variant: str | None = Field(default=None, max_length=255)
+    prompt_sha: str | None = Field(default=None, max_length=64)
 
 
 class RunResponse(BaseModel):
@@ -19,6 +21,8 @@ class RunResponse(BaseModel):
     task: str
     company: str | None
     role: str | None
+    prompt_variant: str | None = None
+    prompt_sha: str | None = None
     status: str
     phase: str
     outcome: str | None
@@ -39,6 +43,8 @@ class RunResponse(BaseModel):
             task=view.task or "",
             company=view.company,
             role=view.role,
+            prompt_variant=view.prompt_variant,
+            prompt_sha=view.prompt_sha,
             status=view.status.value,
             phase=view.phase.value,
             outcome=view.outcome.value if view.outcome else None,

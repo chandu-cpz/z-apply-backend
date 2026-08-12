@@ -94,7 +94,14 @@ async def start_run(
     body: StartRunBody, service: RunSupervisor = Depends(supervisor)
 ) -> RunResponse:
     try:
-        run_id = await service.create(StartRunRequest(job_url=str(body.job_url), task=body.task))
+        run_id = await service.create(
+            StartRunRequest(
+                job_url=str(body.job_url),
+                task=body.task,
+                prompt_variant=body.prompt_variant,
+                prompt_sha=body.prompt_sha,
+            )
+        )
     except Exception as exc:
         raise integration_error(exc) from None
     # The supervisor persisted the initial view, but a direct Core view is the freshest source.

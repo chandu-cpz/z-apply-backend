@@ -23,6 +23,8 @@ def _run_values(view: CoreRunView) -> dict[str, object]:
         "task": view.task or "",
         "company": view.company,
         "role": view.role,
+        "prompt_variant": view.prompt_variant,
+        "prompt_sha": view.prompt_sha,
         "status": view.status.value,
         "phase": view.phase.value,
         "outcome": view.outcome.value if view.outcome else None,
