@@ -12,6 +12,23 @@ class StartRunBody(BaseModel):
     task: str | None = Field(default=None, max_length=10_000)
     prompt_variant: str | None = Field(default=None, max_length=255)
     prompt_sha: str | None = Field(default=None, max_length=64)
+    provider: str | None = Field(default=None, max_length=80)
+    model: str | None = Field(default=None, max_length=255)
+
+
+class ProviderCatalogItem(BaseModel):
+    name: str
+    description: str
+    default_model: str
+    suggested_models: list[str]
+    env_key: str
+    configured: bool
+    is_default: bool
+
+
+class SwitchModelBody(BaseModel):
+    provider: str = Field(min_length=1, max_length=80)
+    model: str | None = Field(default=None, max_length=255)
 
 
 class RunResponse(BaseModel):

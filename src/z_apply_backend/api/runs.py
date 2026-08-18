@@ -19,7 +19,7 @@ from z_apply_backend.persistence.repositories import (
     list_runs,
     model_call_totals,
 )
-from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody
+from z_apply_backend.schemas import ContextBody, RunResponse, StartRunBody, SwitchModelBody
 from z_apply_backend.services.run_supervisor import RunSupervisor
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -100,6 +100,8 @@ async def start_run(
                 task=body.task,
                 prompt_variant=body.prompt_variant,
                 prompt_sha=body.prompt_sha,
+                provider=body.provider,
+                model=body.model,
             )
         )
     except Exception as exc:
@@ -166,6 +168,19 @@ async def send_context(
         raise HTTPException(404, detail={"code": "run_not_found"})
     try:
         return asdict(await handle.send_context(body.content, source="web"))
+    except Exception as exc:
+        raise integration_error(exc) from None
+
+
+@router.post("/{run_id}/model", response_model=RunResponse)
+async def switch_model(
+    run_id: UUID, body: SwitchModelBody, app_core: ZApplyCore = Depends(core)
+) -> RunResponse:
+    handle = app_core.get_run(str(run_id))
+    if handle is None:
+        raise HTTPException(404, detail={"code": "run_not_found"})
+    try:
+        return RunResponse.from_core_view(await handle.switch_model(body.provider, body.model))
     except Exception as exc:
         raise integration_error(exc) from None
 
