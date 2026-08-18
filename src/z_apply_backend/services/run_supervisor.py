@@ -86,6 +86,7 @@ def _queued_view(request: StartRunRequest, run_id: str) -> CoreRunView:
         summary=None,
         current_agent=None,
         current_model=request.model,
+        current_provider=request.provider,
         browser_tab_state=BrowserTabState.PENDING,
         control_mode=BrowserControlMode.AGENT_CONTROL,
         pending_human_request_id=None,
