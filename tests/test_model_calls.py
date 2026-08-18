@@ -18,7 +18,7 @@ def _metrics_event() -> CoreEvent:
         payload={
             "role": "researcher",
             "model_id": "deepseek/v3",
-            "provider": "nim",
+            "provider": "opengateway",
             "input_tokens": 1200,
             "output_tokens": 340,
             "cache_read_tokens": 800,
@@ -37,7 +37,7 @@ def test_model_call_values_maps_ledger_event_to_row() -> None:
     assert values["sequence"] == 42
     assert values["agent"] == "researcher"
     assert values["model"] == "deepseek/v3"
-    assert values["provider"] == "nim"
+    assert values["provider"] == "opengateway"
     assert values["input_tokens"] == 1200
     assert values["output_tokens"] == 340
     assert values["cache_read_tokens"] == 800

@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 from fastapi import FastAPI
-
 from z_apply_core.integrations.models import CoreEvent
+
 from z_apply_backend.api.events import router
 
 
@@ -40,8 +40,10 @@ def _app(core: FakeCore) -> FastAPI:
 
 async def _read_frames(url: str, core: FakeCore) -> list[str]:
     transport = httpx.ASGITransport(app=_app(core))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        async with client.stream("GET", url) as response:
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+        client.stream("GET", url) as response,
+    ):
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
             assert response.headers["x-accel-buffering"] == "no"
