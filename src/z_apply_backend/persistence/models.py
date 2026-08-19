@@ -32,8 +32,6 @@ class RunRow(Base):
     task: Mapped[str] = mapped_column(Text)
     company: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str | None] = mapped_column(String(255))
-    prompt_variant: Mapped[str | None] = mapped_column(String(255))
-    prompt_sha: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), index=True)
     phase: Mapped[str] = mapped_column(String(32))
     outcome: Mapped[str | None] = mapped_column(String(32), index=True)

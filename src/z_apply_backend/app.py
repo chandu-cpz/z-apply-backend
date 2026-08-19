@@ -19,7 +19,6 @@ from z_apply_backend.api import (
     diagnostics,
     events,
     human,
-    prompts,
     providers,
     runs,
 )
@@ -124,7 +123,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(runs.router)
-    app.include_router(prompts.router)
     app.include_router(providers.router)
     app.include_router(events.router)
     app.include_router(human.router)
