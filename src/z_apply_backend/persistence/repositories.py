@@ -293,7 +293,13 @@ async def list_model_calls(session: AsyncSession, run_id: UUID) -> list[ModelCal
 
 
 async def model_call_totals(session: AsyncSession, run_id: UUID) -> dict[str, float | int]:
-    """SQL-derived ledger totals; never drift from the row source of truth."""
+    """SQL-derived ledger totals; never drift from the row source of truth.
+
+    ``input_tokens`` is the gross provider-reported prompt total, which for a
+    resuming agent thread re-sends the whole conversation on every call.
+    ``new_input_tokens`` (input minus cache reads) is the non-recounted figure
+    and the one callers should headline.
+    """
     row = (
         await session.execute(
             select(
@@ -301,15 +307,24 @@ async def model_call_totals(session: AsyncSession, run_id: UUID) -> dict[str, fl
                 func.coalesce(func.sum(ModelCallRow.input_tokens), 0),
                 func.coalesce(func.sum(ModelCallRow.output_tokens), 0),
                 func.coalesce(func.sum(ModelCallRow.cache_read_tokens), 0),
+                func.coalesce(
+                    func.sum(
+                        func.greatest(
+                            ModelCallRow.input_tokens - ModelCallRow.cache_read_tokens, 0
+                        )
+                    ),
+                    0,
+                ),
                 func.coalesce(func.sum(ModelCallRow.cost_usd), 0.0),
             ).where(ModelCallRow.run_id == run_id)
         )
     ).one()
-    calls, input_tokens, output_tokens, cache_read_tokens, cost_usd = row
+    calls, input_tokens, output_tokens, cache_read_tokens, new_input_tokens, cost_usd = row
     return {
         "calls": int(calls or 0),
         "input_tokens": int(input_tokens or 0),
         "output_tokens": int(output_tokens or 0),
         "cache_read_tokens": int(cache_read_tokens or 0),
+        "new_input_tokens": int(new_input_tokens or 0),
         "cost_usd": round(float(cost_usd or 0.0), 6),
     }
