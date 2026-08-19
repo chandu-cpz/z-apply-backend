@@ -231,6 +231,9 @@ async def run_calls(request: Request, run_id: UUID) -> dict[str, object]:
     resolved cost are auditable here regardless of how the run was started
     (CLI or cockpit) — the backend path now persists the ledger the CLI used
     to keep to itself.
+
+    ``new_input_tokens`` per call and in the totals is the non-recounted figure
+    (input minus cache reads); ``input_tokens`` stays the provider gross.
     """
     async with session_scope(request.app.state.sessions) as session:
         if await session.get(RunRow, run_id) is None:
@@ -249,6 +252,7 @@ async def run_calls(request: Request, run_id: UUID) -> dict[str, object]:
                 "input_tokens": row.input_tokens,
                 "output_tokens": row.output_tokens,
                 "cache_read_tokens": row.cache_read_tokens,
+                "new_input_tokens": max(row.input_tokens - row.cache_read_tokens, 0),
                 "ttft_ms": row.ttft_ms,
                 "duration_ms": row.duration_ms,
                 "tok_per_second": row.tok_per_second,
