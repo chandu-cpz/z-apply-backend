@@ -78,8 +78,6 @@ def _queued_view(request: StartRunRequest, run_id: str) -> CoreRunView:
         task=request.task,
         company=None,
         role=None,
-        prompt_variant=request.prompt_variant,
-        prompt_sha=request.prompt_sha,
         status=RunStatus.QUEUED,
         phase=RunPhase.QUEUED,
         outcome=None,

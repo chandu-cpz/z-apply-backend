@@ -104,8 +104,6 @@ async def start_run(
             StartRunRequest(
                 job_url=str(body.job_url),
                 task=body.task,
-                prompt_variant=body.prompt_variant,
-                prompt_sha=body.prompt_sha,
                 provider=body.provider,
                 model=body.model,
             )
