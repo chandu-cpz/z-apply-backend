@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 from z_apply_core.integrations import InvalidRunTransition, StartRunRequest, ZApplyCore
 
-from z_apply_backend.api.errors import integration_error
+from z_apply_backend.api.errors import integration_error, raise_run_not_found
 from z_apply_backend.dependencies import core, supervisor
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import RunEventRow, RunRow
@@ -18,6 +18,7 @@ from z_apply_backend.persistence.repositories import (
     list_model_calls,
     list_runs,
     model_call_totals,
+    new_input_tokens,
 )
 from z_apply_backend.schemas import (
     ContextBody,
@@ -25,6 +26,7 @@ from z_apply_backend.schemas import (
     RunResponse,
     StartRunBody,
     SwitchModelBody,
+    serialize_event_row,
 )
 from z_apply_backend.services.run_supervisor import RunSupervisor
 
@@ -41,7 +43,7 @@ async def run_log(request: Request, run_id: UUID, limit: int = Query(default=500
     """
     async with session_scope(request.app.state.sessions) as session:
         if await session.get(RunRow, run_id) is None:
-            raise HTTPException(404, detail={"code": "run_not_found"})
+            raise_run_not_found()
         rows = await list_events(
             session,
             run_id=run_id,
@@ -145,7 +147,7 @@ async def get_run_detail(
     async with session_scope(request.app.state.sessions) as session:
         row = await get_run(session, run_id)
     if row is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     return RunResponse.model_validate(row)
 
 
@@ -153,7 +155,7 @@ async def get_run_detail(
 async def cancel_run(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> RunResponse:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         await handle.cancel()
     except InvalidRunTransition:
@@ -165,7 +167,7 @@ async def cancel_run(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> RunR
 async def focus_run(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> RunResponse:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         return RunResponse.from_core_view(await handle.focus_browser())
     except Exception as exc:
@@ -178,7 +180,7 @@ async def send_context(
 ) -> dict[str, object]:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         return asdict(await handle.send_context(body.content, source="web"))
     except Exception as exc:
@@ -191,7 +193,7 @@ async def switch_model(
 ) -> RunResponse:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         return RunResponse.from_core_view(await handle.switch_model(body.provider, body.model))
     except Exception as exc:
@@ -204,7 +206,7 @@ async def set_reasoning(
 ) -> RunResponse:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         return RunResponse.from_core_view(
             await handle.set_reasoning(body.reasoning, body.reasoning_effort)
@@ -217,7 +219,7 @@ async def set_reasoning(
 async def close_browser(run_id: UUID, app_core: ZApplyCore = Depends(core)) -> RunResponse:
     handle = app_core.get_run(str(run_id))
     if handle is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     try:
         return RunResponse.from_core_view(await handle.close_browser())
     except Exception as exc:
@@ -237,7 +239,7 @@ async def run_calls(request: Request, run_id: UUID) -> dict[str, object]:
     """
     async with session_scope(request.app.state.sessions) as session:
         if await session.get(RunRow, run_id) is None:
-            raise HTTPException(404, detail={"code": "run_not_found"})
+            raise_run_not_found()
         rows = await list_model_calls(session, run_id)
         totals = await model_call_totals(session, run_id)
     return {
@@ -252,7 +254,7 @@ async def run_calls(request: Request, run_id: UUID) -> dict[str, object]:
                 "input_tokens": row.input_tokens,
                 "output_tokens": row.output_tokens,
                 "cache_read_tokens": row.cache_read_tokens,
-                "new_input_tokens": max(row.input_tokens - row.cache_read_tokens, 0),
+                "new_input_tokens": new_input_tokens(row.input_tokens, row.cache_read_tokens),
                 "ttft_ms": row.ttft_ms,
                 "duration_ms": row.duration_ms,
                 "tok_per_second": row.tok_per_second,
@@ -279,16 +281,4 @@ async def run_events(
             limit=limit,
             newest_first=after is None,
         )
-    return [
-        {
-            "database_id": row.id,
-            "run_id": str(row.run_id),
-            "sequence": row.run_sequence,
-            "occurred_at": row.occurred_at.isoformat(),
-            "type": row.type,
-            "source": row.source,
-            "level": row.level,
-            "payload": row.payload,
-        }
-        for row in rows
-    ]
+    return [serialize_event_row(row) for row in rows]

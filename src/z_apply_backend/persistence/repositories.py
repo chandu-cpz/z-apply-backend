@@ -17,6 +17,17 @@ from z_apply_backend.persistence.models import (
 )
 
 
+def new_input_tokens(input_tokens: int, cache_read_tokens: int) -> int:
+    """Non-recounted input tokens — single definition for Python and SQL.
+
+    Provider-reported ``input_tokens`` re-sends the whole conversation on
+    resumption; ``cache_read_tokens`` is the prefix-cache hit.  The SQL
+    totals use ``GREATEST(input - cache, 0)`` which is semantically
+    identical — see ``model_call_totals`` below.  Keep them in sync.
+    """
+    return max(input_tokens - cache_read_tokens, 0)
+
+
 def _run_values(view: CoreRunView) -> dict[str, object]:
     return {
         "job_url": view.job_url,
@@ -29,10 +40,15 @@ def _run_values(view: CoreRunView) -> dict[str, object]:
         "summary": view.summary,
         "current_agent": view.current_agent,
         "current_model": view.current_model,
+        "current_provider": view.current_provider,
         "browser_tab_state": view.browser_tab_state.value,
+        "control_mode": view.control_mode.value,
+        "pending_human_request_id": view.pending_human_request_id,
         "latest_run_sequence": view.latest_event_sequence,
         "started_at": view.started_at,
         "finished_at": view.finished_at,
+        "current_reasoning": view.current_reasoning,
+        "current_reasoning_effort": view.current_reasoning_effort,
     }
 
 
@@ -298,7 +314,9 @@ async def model_call_totals(session: AsyncSession, run_id: UUID) -> dict[str, fl
     ``input_tokens`` is the gross provider-reported prompt total, which for a
     resuming agent thread re-sends the whole conversation on every call.
     ``new_input_tokens`` (input minus cache reads) is the non-recounted figure
-    and the one callers should headline.
+    and the one callers should headline.  The per-row SQL uses
+    ``GREATEST(input - cache, 0)`` — identical to ``new_input_tokens()``
+    above.
     """
     row = (
         await session.execute(

@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import RunEventRow
 from z_apply_backend.persistence.repositories import list_events
+from z_apply_backend.schemas import serialize_event_row
 from z_apply_backend.services.event_hub import EventHub
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -119,16 +120,7 @@ async def stream_live_events(
 
 
 def _stored_row(row: RunEventRow) -> dict[str, object]:
-    return {
-        "database_id": row.id,
-        "run_id": str(row.run_id),
-        "sequence": row.run_sequence,
-        "occurred_at": row.occurred_at.isoformat(),
-        "type": row.type,
-        "source": row.source,
-        "level": row.level,
-        "payload": row.payload,
-    }
+    return serialize_event_row(row)
 
 
 def _sse(event_id: int, event_type: str, data: Mapping[str, object]) -> str:

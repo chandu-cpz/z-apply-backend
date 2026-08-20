@@ -27,18 +27,27 @@ class EventStore:
         handle = self._core.get_run(event.run_id)
         if handle is None:
             return
+        # View is required for every event (persist_event updates RunRow).
         view = await handle.view()
-        human_requests = await handle.human_requests()
-        artifacts = await handle.artifacts()
+        # Conditionally fetch only the collections needed for this event type
+        # to avoid O(H+A) write amplification on unrelated events.
+        human_requests = None
+        artifacts = None
+        if event.type.startswith("human."):
+            human_requests = await handle.human_requests()
+        if event.type == "artifact.created":
+            artifacts = await handle.artifacts()
         async with session_scope(self._sessions, begin=True) as session:
             row = await persist_event(session, event, view)
             if event.type == "model.call.metrics":
                 # One ledger row per successful LLM call (auditable token/cost
                 # history); totals are SQL-derived at read time.
                 await insert_model_call(session, event)
-            for human_request in human_requests:
-                await upsert_human_request(session, human_request)
-            for artifact in artifacts:
-                await upsert_artifact(session, artifact)
+            if human_requests is not None:
+                for human_request in human_requests:
+                    await upsert_human_request(session, human_request)
+            if artifacts is not None:
+                for artifact in artifacts:
+                    await upsert_artifact(session, artifact)
             stored = StoredEvent(row.id, event.type, {"database_id": row.id, **event.to_dict()})
         await self._hub.publish(stored)

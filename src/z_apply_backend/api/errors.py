@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import NoReturn
+
 from fastapi import HTTPException
 from z_apply_core.integrations import (
     BrowserControlConflict,
@@ -33,3 +35,7 @@ def integration_error(exc: Exception) -> HTTPException:
     if isinstance(exc, CoreShuttingDown):
         return HTTPException(503, detail={"code": "core_shutting_down"})
     return HTTPException(500, detail={"code": "integration_failure"})
+
+
+def raise_run_not_found() -> NoReturn:
+    raise HTTPException(404, detail={"code": "run_not_found"})

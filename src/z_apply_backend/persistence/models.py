@@ -38,7 +38,12 @@ class RunRow(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     current_agent: Mapped[str | None] = mapped_column(String(255))
     current_model: Mapped[str | None] = mapped_column(String(255))
+    current_provider: Mapped[str | None] = mapped_column(String(80))
     browser_tab_state: Mapped[str] = mapped_column(String(32))
+    control_mode: Mapped[str] = mapped_column(String(32), default="agent_control")
+    pending_human_request_id: Mapped[str | None] = mapped_column(String(64))
+    current_reasoning: Mapped[str] = mapped_column(String(16), default="auto")
+    current_reasoning_effort: Mapped[str | None] = mapped_column(String(16))
     latest_run_sequence: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True

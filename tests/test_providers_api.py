@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from z_apply_backend.app import create_app
 from z_apply_backend.schemas import ProviderCatalogItem, StartRunBody, SwitchModelBody
 
 

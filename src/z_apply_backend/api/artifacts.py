@@ -5,10 +5,12 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
+from z_apply_backend.api.errors import raise_run_not_found
 from z_apply_backend.config import Settings
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import ArtifactRow
 from z_apply_backend.persistence.repositories import get_artifact, get_run, list_artifacts
+from z_apply_backend.schemas import serialize_artifact_row
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"])
 
@@ -19,7 +21,7 @@ async def artifacts(request: Request, run_id: UUID) -> list[dict[str, object]]:
         run = await get_run(session, run_id)
         rows = await list_artifacts(session, run_id) if run is not None else []
     if run is None:
-        raise HTTPException(404, detail={"code": "run_not_found"})
+        raise_run_not_found()
     return [_artifact_dict(item) for item in rows]
 
 
@@ -37,14 +39,4 @@ async def artifact(request: Request, artifact_id: UUID) -> FileResponse:
 
 
 def _artifact_dict(item: ArtifactRow) -> dict[str, object]:
-    return {
-        "artifact_id": str(item.id),
-        "run_id": str(item.run_id),
-        "kind": item.kind,
-        "filename": item.filename,
-        "relative_path": item.relative_path,
-        "mime_type": item.mime_type,
-        "size_bytes": item.size_bytes,
-        "sha256": item.sha256,
-        "created_at": item.created_at,
-    }
+    return serialize_artifact_row(item)
