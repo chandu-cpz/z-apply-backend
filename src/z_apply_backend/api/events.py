@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.models import RunEventRow
-from z_apply_backend.persistence.repositories import list_events
+from z_apply_backend.persistence.repositories import list_events, max_event_id
 from z_apply_backend.schemas import serialize_event_row
 from z_apply_backend.services.event_hub import EventHub
 
@@ -41,6 +41,16 @@ async def stream_events(
         # replay runs lands in this queue and is deduplicated by database id.
         queue = await hub.register()
         try:
+            # A cursor beyond the stored history means the client's localStorage
+            # survived a database reset (or a restore to an earlier snapshot):
+            # every future event would sit at or below the cursor and be dropped
+            # forever, with REST bootstrap masking it until the next refresh.
+            # Tell the client to drop its cursor and replay from the start.
+            async with session_scope(request.app.state.sessions) as session:
+                stored_max = await max_event_id(session)
+            if cursor > stored_max:
+                cursor = 0
+                yield _sse(stored_max, "cursor.reset", {"max_database_id": stored_max})
             page_size = 500
             while not await request.is_disconnected():
                 async with session_scope(request.app.state.sessions) as session:
@@ -75,31 +85,19 @@ async def stream_events(
 async def stream_live_events(
     request: Request,
     run_id: str | None = Query(default=None),
-    after: int | None = Query(default=None, ge=0),
 ) -> StreamingResponse:
     """Stream high-frequency, non-persisted events (reasoning/text/tool-call
     deltas) straight from the running core run. No DB replay: only events the
-    core publishes live to its live broadcaster. The core broadcaster's bounded
-    replay tail (500 events) is delivered on subscribe, so a reconnecting
-    EventSource resumes from its ``Last-Event-ID`` without losing the in-flight
-    token stream: events at or below the client's cursor are skipped, making
-    the wire monotonic and duplicate-free.
+    core publishes live to its live broadcaster. On reconnect, EventSource's
+    bounded broadcaster replay tail is re-delivered and the client drops
+    duplicates itself (it dedupes per run by sequence), so the server must not
+    cursor-skip here: sequences are per-run, and a global cursor built from one
+    run's watermark silently swallowed other runs' deltas.
 
     Silent stretches (long tool executions) emit an SSE comment every 15s so
     proxies and load balancers with idle timeouts never kill the connection.
     """
     core = request.app.state.core
-    last_event_id = request.headers.get("last-event-id")
-    try:
-        # Resume from whichever cursor is furthest: an explicit ?after= query or
-        # the browser's Last-Event-ID (sent automatically by EventSource on
-        # reconnect from the ``id:`` fields in our frames).
-        after_cursor = after if after is not None else 0
-        cursor = max(after_cursor, int(last_event_id or 0))
-    except ValueError:
-        raise HTTPException(422, detail={"code": "invalid_event_cursor"}) from None
-    if cursor < 0:
-        raise HTTPException(422, detail={"code": "invalid_event_cursor"})
 
     async def stream() -> AsyncIterator[str]:
         async for event in core.subscribe_live(keepalive=15.0):
@@ -107,8 +105,6 @@ async def stream_live_events(
                 break
             if event is None:
                 yield ": z-apply keepalive\n\n"
-                continue
-            if event.sequence <= cursor:
                 continue
             if run_id is not None and event.run_id != run_id:
                 continue

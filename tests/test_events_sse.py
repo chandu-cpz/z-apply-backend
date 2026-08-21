@@ -38,11 +38,13 @@ def _app(core: FakeCore) -> FastAPI:
     return app
 
 
-async def _read_frames(url: str, core: FakeCore) -> list[str]:
+async def _read_frames(
+    url: str, core: FakeCore, headers: dict[str, str] | None = None
+) -> list[str]:
     transport = httpx.ASGITransport(app=_app(core))
     async with (
         httpx.AsyncClient(transport=transport, base_url="http://test") as client,
-        client.stream("GET", url) as response,
+        client.stream("GET", url, headers=headers) as response,
     ):
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
@@ -74,6 +76,19 @@ async def test_live_sse_run_filter_drops_other_runs() -> None:
 
     ids = [line for line in lines if line.startswith("id: ")]
     assert ids == ["id: 1"]
+
+
+@pytest.mark.asyncio
+async def test_live_sse_cursor_from_one_run_does_not_drop_other_runs() -> None:
+    """Sequences are per-run, so a Last-Event-ID from run-b's high watermark
+    must not suppress run-a's lower-sequence deltas (the client dedupes)."""
+    core = FakeCore([_event(3, run_id="run-a"), _event(9, run_id="run-b")])
+    lines = await _read_frames(
+        "/api/v1/events/live?run_id=run-a", core, headers={"last-event-id": "9"}
+    )
+
+    ids = [line for line in lines if line.startswith("id: ")]
+    assert ids == ["id: 3"]
 
 
 @pytest.mark.asyncio
