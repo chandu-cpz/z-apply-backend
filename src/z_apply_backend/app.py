@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from z_apply_core.agents.providers import get_model_gateway
 from z_apply_core.integrations import CoreIntegrationConfig, ZApplyCore
 
 from z_apply_backend.api import (
@@ -49,6 +50,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a row that could still roll back. Same wire shape EventStore.accept uses.
     for row in interrupted_events:
         await hub.publish(StoredEvent(row.id, row.type, serialize_event_row(row)))
+    try:
+        from z_apply_core.config import load_settings
+
+        _settings = load_settings()
+        _gateway = get_model_gateway(provider_name=_settings.model_provider)
+        logger.info("LLM config: provider=%s model=%s", _settings.model_provider, _gateway.model_id)
+    except Exception:  # noqa: BLE001 - diagnostics must never block startup
+        logger.warning("LLM config: unable to resolve provider/model at startup")
     event_store = EventStore(sessions, core, hub)
     core.add_event_sink(event_store)
     await core.start()
