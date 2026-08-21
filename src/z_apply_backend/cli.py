@@ -23,6 +23,8 @@ def _run(*, reload: bool) -> None:
         "host": os.environ.get("Z_APPLY_HOST", "127.0.0.1"),
         "port": int(os.environ.get("Z_APPLY_PORT", "8000")),
         "factory": True,
+        # Kill lingering SSE connections on shutdown so reloads don't wedge.
+        "timeout_graceful_shutdown": 5,
         "reload": reload,
     }
     if reload:
