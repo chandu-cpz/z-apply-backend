@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from z_apply_core.agents.model_provider import get_provider_catalog
+from z_apply_core.agents.providers import get_provider_catalog
 
 from z_apply_backend.schemas import ProviderCatalogItem
 
