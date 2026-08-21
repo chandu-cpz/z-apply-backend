@@ -14,23 +14,25 @@ process is required.
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv sync --group dev
 UV_CACHE_DIR=/tmp/uv-cache uv run alembic upgrade head          # once, after schema migrations
-UV_CACHE_DIR=/tmp/uv-cache uv run uvicorn z_apply_backend.app:create_app --factory \
-  --reload --reload-dir . --reload-dir ../z-apply-core/src --reload-dir ../playwright-python-mcp/src
+UV_CACHE_DIR=/tmp/uv-cache uv run dev
 ```
 
 Run it from the `z-apply-backend` directory. The API binds to
 `127.0.0.1:8000`; verify with `curl http://127.0.0.1:8000/api/v1/health`.
+`uv run start` does the same without auto-reload, for production-style runs.
 
-### Why the flags? (read this once, then never think about it again)
+### Why reload watches three repos (read this once, then never think about it again)
 
-- `--factory` tells uvicorn that `z_apply_backend.app:create_app` is a
-  *function that builds the app* (a factory), not the app itself. FastAPI's
-  own `fastapi dev` CLI cannot call factories, so don't use it here.
-- `--reload-dir . --reload-dir ../z-apply-core/src --reload-dir ../playwright-python-mcp/src`
-  makes the auto-reloader watch ALL THREE repos. `z-apply-core` and
+`uv run dev` resolves through `[project.scripts]` in `pyproject.toml` to
+`z_apply_backend.cli:dev`, which configures uvicorn for you:
+
+- The app is passed as a factory (`z_apply_backend.app:create_app` is a
+  *function that builds the app*, not the app itself). FastAPI's own
+  `fastapi dev` CLI cannot call factories, so don't use it here.
+- The reloader watches ALL THREE repos. `z-apply-core` and
   `playwright-python-mcp` are installed as editable packages, so their source
-  lives outside this directory — without these flags, edits to them would
-  silently require a manual restart. With them, any `.py` change in the
+  lives outside this directory. Without that, edits to them would silently
+  require a manual restart. With it, any `.py` change in the
   backend, core, or browser backend restarts the server and picks up the new
   code automatically. **Never manually restart after a code edit.**
 
