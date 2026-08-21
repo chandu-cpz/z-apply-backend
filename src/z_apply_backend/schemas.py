@@ -60,8 +60,8 @@ class RunResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
-    current_reasoning: Literal["auto", "off", "on"] = "auto"
-    current_reasoning_effort: Literal["low", "medium", "high", "max"] | None = None
+    current_reasoning: Literal["auto", "off", "on"] = "on"
+    current_reasoning_effort: Literal["low", "medium", "high", "max"] | None = "high"
 
     @classmethod
     def from_core_view(cls, view: CoreRunView) -> RunResponse:
