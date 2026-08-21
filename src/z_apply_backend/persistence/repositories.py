@@ -160,6 +160,9 @@ async def interrupt_active_runs(session: AsyncSession) -> list[RunEventRow]:
         row.phase = "terminal"
         row.outcome = "interrupted"
         row.summary = "Backend restarted while this application was active; it was not retried."
+        # The process death took every browser with it; leaving "open" here
+        # makes clients auto-focus a tab that no longer exists (404 on focus).
+        row.browser_tab_state = "closed"
         row.latest_run_sequence = sequence
         row.finished_at = occurred_at
     await session.flush()

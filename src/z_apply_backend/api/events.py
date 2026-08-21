@@ -22,7 +22,13 @@ async def stream_events(
 ) -> StreamingResponse:
     last_event_id = request.headers.get("last-event-id")
     try:
-        cursor = after if after is not None else int(last_event_id or 0)
+        # Last-Event-ID wins over ?after=: the browser sends the header (from
+        # our ``id:`` frames) on every EventSource reconnect, so resuming from
+        # the live cursor must beat the frozen cursor baked into the URL at
+        # connect time. ?after= only applies to the initial subscription,
+        # where no header exists yet. Preferring ?after= here caused every
+        # reconnect to replay the full history from the original cursor.
+        cursor = int(last_event_id) if last_event_id else (after or 0)
     except ValueError:
         raise HTTPException(422, detail={"code": "invalid_event_cursor"}) from None
     if cursor < 0:
