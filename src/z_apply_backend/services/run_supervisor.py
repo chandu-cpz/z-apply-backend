@@ -18,14 +18,22 @@ from z_apply_core.integrations import (
 
 from z_apply_backend.persistence.database import session_scope
 from z_apply_backend.persistence.repositories import insert_run, mark_run_start_failed
+from z_apply_backend.schemas import serialize_event_row
+from z_apply_backend.services.event_hub import EventHub, StoredEvent
 
 
 class RunSupervisor:
     """Creates durable records before handing execution to the Core scheduler."""
 
-    def __init__(self, core: ZApplyCore, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        core: ZApplyCore,
+        sessions: async_sessionmaker[AsyncSession],
+        hub: EventHub | None = None,
+    ) -> None:
         self._core = core
         self._sessions = sessions
+        self._hub = hub
         self.accepting = True
         self._observers: set[asyncio.Task[None]] = set()
 
@@ -39,7 +47,13 @@ class RunSupervisor:
             handle = await self._core.start_run(request, run_id=run_id)
         except Exception as exc:
             async with session_scope(self._sessions, begin=True) as session:
-                await mark_run_start_failed(session, UUID(run_id), type(exc).__name__)
+                failed = await mark_run_start_failed(session, UUID(run_id), type(exc).__name__)
+            if failed is not None and self._hub is not None:
+                # Same wire shape EventStore.accept publishes; publishing after
+                # the commit above keeps live subscribers on durable rows only.
+                await self._hub.publish(
+                    StoredEvent(failed.id, failed.type, serialize_event_row(failed))
+                )
             raise
         observer = asyncio.create_task(self._observe(handle), name=f"observe-core-run-{run_id}")
         self._observers.add(observer)

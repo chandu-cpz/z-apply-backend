@@ -105,6 +105,10 @@ async def get_run(session: AsyncSession, run_id: UUID) -> RunRow | None:
     return await session.get(RunRow, run_id)
 
 
+async def max_event_id(session: AsyncSession) -> int:
+    return await session.scalar(select(func.max(RunEventRow.id))) or 0
+
+
 async def list_events(
     session: AsyncSession,
     *,
@@ -142,6 +146,18 @@ async def interrupt_active_runs(session: AsyncSession) -> list[RunEventRow]:
     events: list[RunEventRow] = []
     for row in rows:
         sequence = await _next_run_sequence(session, row.id, row.latest_run_sequence)
+        # Mutate the run before building the event so the attached view
+        # snapshot describes the post-interruption truth clients patch with.
+        row.status = "terminal"
+        row.phase = "terminal"
+        row.outcome = "interrupted"
+        summary = "Backend restarted while this application was active; it was not retried."
+        row.summary = summary
+        # The process death took every browser with it; leaving "open" here
+        # makes clients auto-focus a tab that no longer exists (404 on focus).
+        row.browser_tab_state = "closed"
+        row.latest_run_sequence = sequence
+        row.finished_at = occurred_at
         event = RunEventRow(
             run_id=row.id,
             run_sequence=sequence,
@@ -151,47 +167,79 @@ async def interrupt_active_runs(session: AsyncSession) -> list[RunEventRow]:
             level="warning",
             payload={
                 "outcome": "interrupted",
-                "summary": "Backend restarted while this application was active; it was not retried.",
+                "summary": summary,
+                # Clients patch their run cards from payload.view; without it a
+                # restart leaves every previously-active card stale forever.
+                "view": _row_view_snapshot(row, latest_event_sequence=sequence),
             },
         )
         session.add(event)
         events.append(event)
-        row.status = "terminal"
-        row.phase = "terminal"
-        row.outcome = "interrupted"
-        row.summary = "Backend restarted while this application was active; it was not retried."
-        # The process death took every browser with it; leaving "open" here
-        # makes clients auto-focus a tab that no longer exists (404 on focus).
-        row.browser_tab_state = "closed"
-        row.latest_run_sequence = sequence
-        row.finished_at = occurred_at
     await session.flush()
     return events
 
 
-async def mark_run_start_failed(session: AsyncSession, run_id: UUID, error_code: str) -> None:
+def _row_view_snapshot(row: RunRow, *, latest_event_sequence: int) -> dict[str, object]:
+    """JSON-safe snapshot of a mutated RunRow, mirroring core's view snapshots.
+
+    Backend-synthesized events have no CoreRunView, so the snapshot comes from
+    the row's own columns (call it after mutating them). Keeping the same key
+    shape as core means one client patch path for all persisted events.
+    """
+    return {
+        "run_id": str(row.id),
+        "job_url": row.job_url,
+        "task": row.task,
+        "company": row.company,
+        "role": row.role,
+        "status": row.status,
+        "phase": row.phase,
+        "outcome": row.outcome,
+        "summary": row.summary,
+        "current_agent": row.current_agent,
+        "current_model": row.current_model,
+        "current_provider": row.current_provider,
+        "browser_tab_state": row.browser_tab_state,
+        "control_mode": row.control_mode,
+        "pending_human_request_id": row.pending_human_request_id,
+        "latest_event_sequence": latest_event_sequence,
+        "created_at": row.created_at.isoformat() if row.created_at is not None else None,
+        "started_at": row.started_at.isoformat() if row.started_at is not None else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at is not None else None,
+        "current_reasoning": row.current_reasoning,
+        "current_reasoning_effort": row.current_reasoning_effort,
+    }
+
+
+async def mark_run_start_failed(
+    session: AsyncSession, run_id: UUID, error_code: str
+) -> RunEventRow | None:
+    """Terminalize a run whose start failed; returns its synthesized event."""
     row = await session.get(RunRow, run_id, with_for_update=True)
     if row is None:
-        return
+        return None
     occurred_at = datetime.now(UTC)
     sequence = await _next_run_sequence(session, run_id, row.latest_run_sequence)
-    session.add(
-        RunEventRow(
-            run_id=run_id,
-            run_sequence=sequence,
-            occurred_at=occurred_at,
-            type="run.start_failed",
-            source={"component": "backend"},
-            level="error",
-            payload={"error_code": error_code},
-        )
-    )
     row.status = "terminal"
     row.phase = "terminal"
     row.outcome = "failed"
     row.summary = "Core rejected or failed to start this run."
     row.latest_run_sequence = sequence
     row.finished_at = occurred_at
+    event = RunEventRow(
+        run_id=run_id,
+        run_sequence=sequence,
+        occurred_at=occurred_at,
+        type="run.start_failed",
+        source={"component": "backend"},
+        level="error",
+        payload={
+            "error_code": error_code,
+            "view": _row_view_snapshot(row, latest_event_sequence=sequence),
+        },
+    )
+    session.add(event)
+    return event
 
 
 async def _next_run_sequence(session: AsyncSession, run_id: UUID, cached: int) -> int:

@@ -25,7 +25,8 @@ from z_apply_backend.api import (
 from z_apply_backend.config import Settings
 from z_apply_backend.persistence.database import make_engine, make_session_factory
 from z_apply_backend.persistence.repositories import interrupt_active_runs
-from z_apply_backend.services.event_hub import EventHub
+from z_apply_backend.schemas import serialize_event_row
+from z_apply_backend.services.event_hub import EventHub, StoredEvent
 from z_apply_backend.services.event_store import EventStore
 from z_apply_backend.services.run_supervisor import RunSupervisor
 from z_apply_backend.services.vnc_bridge import VncBridge
@@ -40,10 +41,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sessions = make_session_factory(engine)
     async with engine.connect() as connection:
         await connection.execute(text("SELECT 1"))
-    async with sessions.begin() as session:
-        await interrupt_active_runs(session)
     core = ZApplyCore(CoreIntegrationConfig(max_active_runs=settings.max_active_runs))
     hub = EventHub()
+    async with sessions.begin() as session:
+        interrupted_events = await interrupt_active_runs(session)
+    # Publish only after the transaction commits so subscribers never receive
+    # a row that could still roll back. Same wire shape EventStore.accept uses.
+    for row in interrupted_events:
+        await hub.publish(StoredEvent(row.id, row.type, serialize_event_row(row)))
     event_store = EventStore(sessions, core, hub)
     core.add_event_sink(event_store)
     await core.start()
@@ -52,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.core = core
     app.state.event_hub = hub
     app.state.vnc_bridge = VncBridge()
-    supervisor = RunSupervisor(core, sessions)
+    supervisor = RunSupervisor(core, sessions, hub)
     app.state.supervisor = supervisor
     try:
         yield
